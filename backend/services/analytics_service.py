@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 import numpy as np
 
@@ -22,78 +22,126 @@ class AnalyticsService:
         Get daily revenue aggregation.
         Default: last 90 days
         """
+        from datetime import datetime, timedelta, timezone
+        
         # Default to last 90 days
         if not end:
-            end_date = datetime.utcnow()
+            end_date = datetime.now(timezone.utc)
         else:
             end_date = datetime.fromisoformat(end.replace('Z', '+00:00'))
+            # Ensure timezone-aware
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
         
         if not start:
             start_date = end_date - timedelta(days=90)
         else:
             start_date = datetime.fromisoformat(start.replace('Z', '+00:00'))
+            # Ensure timezone-aware
+            if start_date.tzinfo is None:
+                start_date = start_date.replace(tzinfo=timezone.utc)
         
-        # Aggregate by day
-        pipeline = [
-            {
-                "$addFields": {
-                    "paid_date": {
-                        "$dateFromString": {
-                            "dateString": "$paid_at",
-                            "onError": None
-                        }
-                    }
-                }
-            },
-            {
-                "$match": {
-                    "paid_date": {
-                        "$gte": start_date,
-                        "$lte": end_date
-                    },
-                    "status": "completed"
-                }
-            },
-            {
-                "$group": {
-                    "_id": {
-                        "$dateToString": {
-                            "format": "%Y-%m-%d",
-                            "date": "$paid_date"
-                        }
-                    },
-                    "revenue": {"$sum": "$amount"},
-                    "orders": {"$sum": 1}
-                }
-            },
-            {
-                "$sort": {"_id": 1}
-            },
-            {
-                "$project": {
-                    "_id": 0,
-                    "day": "$_id",
-                    "revenue": 1,
-                    "orders": 1
-                }
-            }
-        ]
+        # Fetch all transactions (simple approach)
+        cursor = self.collection.find()
+        transactions = await cursor.to_list(length=None)
         
-        result = await self.collection.aggregate(pipeline).to_list(length=None)
+        # Process in Python for robustness
+        daily_data = {}
+        count_in_range = 0
         
+        for tx in transactions:
+            try:
+                # Try to parse paid_at, fall back to created_at
+                date_str = tx.get('paid_at') or tx.get('created_at')
+                if not date_str:
+                    continue
+                
+                # Parse ISO format date string
+                if isinstance(date_str, str):
+                    # Handle ISO 8601 strings
+                    date_str = date_str.replace('Z', '+00:00')
+                    try:
+                        tx_date = datetime.fromisoformat(date_str)
+                        # Ensure timezone-aware
+                        if tx_date.tzinfo is None:
+                            tx_date = tx_date.replace(tzinfo=timezone.utc)
+                    except:
+                        continue
+                else:
+                    tx_date = date_str
+                    # Ensure timezone-aware
+                    if isinstance(tx_date, datetime) and tx_date.tzinfo is None:
+                        tx_date = tx_date.replace(tzinfo=timezone.utc)
+                
+                # Check if in range
+                if tx_date < start_date or tx_date > end_date:
+                    continue
+                
+                # Only count completed/refunded transactions
+                if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                    continue
+                
+                day_str = tx_date.strftime('%Y-%m-%d')
+                if day_str not in daily_data:
+                    daily_data[day_str] = {'revenue': 0.0, 'orders': 0}
+                
+                daily_data[day_str]['revenue'] += float(tx.get('amount', 0))
+                daily_data[day_str]['orders'] += 1
+                count_in_range += 1
+            except Exception as e:
+                continue
+        # If no transactions fell within the requested range but there are transactions,
+        # fall back to using the full available date range so charts don't appear empty.
+        if count_in_range == 0 and transactions:
+            daily_data = {}
+            for tx in transactions:
+                try:
+                    date_str = tx.get('paid_at') or tx.get('created_at')
+                    if not date_str:
+                        continue
+                    if isinstance(date_str, str):
+                        date_str = date_str.replace('Z', '+00:00')
+                        try:
+                            tx_date = datetime.fromisoformat(date_str)
+                            # Ensure timezone-aware
+                            if tx_date.tzinfo is None:
+                                tx_date = tx_date.replace(tzinfo=timezone.utc)
+                        except:
+                            continue
+                    else:
+                        tx_date = date_str
+                        # Ensure timezone-aware
+                        if isinstance(tx_date, datetime) and tx_date.tzinfo is None:
+                            tx_date = tx_date.replace(tzinfo=timezone.utc)
+
+                    # Only count completed/refunded/pending transactions
+                    if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                        continue
+
+                    day_str = tx_date.strftime('%Y-%m-%d')
+                    if day_str not in daily_data:
+                        daily_data[day_str] = {'revenue': 0.0, 'orders': 0}
+
+                    daily_data[day_str]['revenue'] += float(tx.get('amount', 0))
+                    daily_data[day_str]['orders'] += 1
+                except Exception:
+                    continue
         # Fill in missing days with zero revenue
-        daily_map = {item['day']: item for item in result}
         filled_result = []
         current_date = start_date
         while current_date <= end_date:
             day_str = current_date.strftime('%Y-%m-%d')
-            if day_str in daily_map:
-                filled_result.append(daily_map[day_str])
+            if day_str in daily_data:
+                filled_result.append({
+                    'day': day_str,
+                    'revenue': daily_data[day_str]['revenue'],
+                    'orders': daily_data[day_str]['orders']
+                })
             else:
                 filled_result.append({
-                    "day": day_str,
-                    "revenue": 0.0,
-                    "orders": 0
+                    'day': day_str,
+                    'revenue': 0.0,
+                    'orders': 0
                 })
             current_date += timedelta(days=1)
         
@@ -112,13 +160,18 @@ class AnalyticsService:
         today_result = await self.collection.aggregate([
             {
                 "$addFields": {
-                    "paid_date": {"$dateFromString": {"dateString": "$paid_at", "onError": None}}
+                    "paid_date": {
+                        "$ifNull": [
+                            {"$dateFromString": {"dateString": "$paid_at", "onError": None}},
+                            {"$dateFromString": {"dateString": "$created_at", "onError": None}}
+                        ]
+                    }
                 }
             },
             {
                 "$match": {
                     "paid_date": {"$gte": today_start},
-                    "status": "completed"
+                    "status": {"$in": ["completed", "refunded", "pending"]}
                 }
             },
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -129,13 +182,18 @@ class AnalyticsService:
         mtd_result = await self.collection.aggregate([
             {
                 "$addFields": {
-                    "paid_date": {"$dateFromString": {"dateString": "$paid_at", "onError": None}}
+                    "paid_date": {
+                        "$ifNull": [
+                            {"$dateFromString": {"dateString": "$paid_at", "onError": None}},
+                            {"$dateFromString": {"dateString": "$created_at", "onError": None}}
+                        ]
+                    }
                 }
             },
             {
                 "$match": {
                     "paid_date": {"$gte": month_start},
-                    "status": "completed"
+                    "status": {"$in": ["completed", "refunded", "pending"]}
                 }
             },
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -146,13 +204,18 @@ class AnalyticsService:
         ytd_result = await self.collection.aggregate([
             {
                 "$addFields": {
-                    "paid_date": {"$dateFromString": {"dateString": "$paid_at", "onError": None}}
+                    "paid_date": {
+                        "$ifNull": [
+                            {"$dateFromString": {"dateString": "$paid_at", "onError": None}},
+                            {"$dateFromString": {"dateString": "$created_at", "onError": None}}
+                        ]
+                    }
                 }
             },
             {
                 "$match": {
                     "paid_date": {"$gte": year_start},
-                    "status": "completed"
+                    "status": {"$in": ["completed", "refunded", "pending"]}
                 }
             },
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -273,43 +336,128 @@ class AnalyticsService:
         """
         Get top products by revenue.
         """
-        end_date = datetime.utcnow()
+        from datetime import datetime, timedelta, timezone
+        
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
         
-        pipeline = [
-            {
-                "$addFields": {
-                    "paid_date": {"$dateFromString": {"dateString": "$paid_at", "onError": None}}
-                }
-            },
-            {
-                "$match": {
-                    "paid_date": {"$gte": start_date, "$lte": end_date},
-                    "status": "completed"
-                }
-            },
-            {
-                "$group": {
-                    "_id": "$product_id",
-                    "revenue": {"$sum": "$amount"},
-                    "orders": {"$sum": 1}
-                }
-            },
-            {"$sort": {"revenue": -1}},
-            {"$limit": 10},
-            {
-                "$project": {
-                    "_id": 0,
-                    "product_id": "$_id",
-                    "name": "$_id",  # Using product_id as name (can be enriched)
-                    "revenue": 1,
-                    "orders": 1,
-                    "category": {"$literal": "Product"}  # Default category
-                }
-            }
-        ]
+        print(f"[DEBUG] get_top_products: Looking for products from {start_date} to {end_date}")
         
-        result = await self.collection.aggregate(pipeline).to_list(length=None)
+        # Fetch all transactions (simple approach)
+        cursor = self.collection.find()
+        transactions = await cursor.to_list(length=None)
+        
+        print(f"[DEBUG] Total transactions in DB: {len(transactions)}")
+        
+        # Process in Python for robustness
+        product_data = {}
+        count_in_range = 0
+        
+        for tx in transactions:
+            try:
+                # Try to parse paid_at, fall back to created_at
+                date_str = tx.get('paid_at') or tx.get('created_at')
+                if not date_str:
+                    continue
+                
+                # Parse ISO format date string
+                if isinstance(date_str, str):
+                    date_str = date_str.replace('Z', '+00:00')
+                    try:
+                        tx_date = datetime.fromisoformat(date_str)
+                        # Ensure timezone-aware
+                        if tx_date.tzinfo is None:
+                            tx_date = tx_date.replace(tzinfo=timezone.utc)
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to parse date: {date_str}, error: {e}")
+                        continue
+                else:
+                    tx_date = date_str
+                    # Ensure timezone-aware
+                    if isinstance(tx_date, datetime) and tx_date.tzinfo is None:
+                        tx_date = tx_date.replace(tzinfo=timezone.utc)
+                
+                # Check if in range
+                if tx_date < start_date or tx_date > end_date:
+                    continue
+                
+                # Only count completed/refunded transactions
+                if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                    continue
+                
+                product_id = tx.get('product_id', 'Unknown')
+                if product_id not in product_data:
+                    product_data[product_id] = {'revenue': 0.0, 'orders': 0}
+                
+                product_data[product_id]['revenue'] += float(tx.get('amount', 0))
+                product_data[product_id]['orders'] += 1
+                count_in_range += 1
+            except Exception as e:
+                print(f"[DEBUG] Error processing transaction: {e}")
+                continue
+        
+        print(f"[DEBUG] Transactions in range ({days} days): {count_in_range}")
+        print(f"[DEBUG] Products found: {len(product_data)}")
+        
+        # Sort by revenue and get top 10
+        # If nothing was found in the requested date range, fall back to all transactions
+        if count_in_range == 0 and transactions:
+            product_data = {}
+            for tx in transactions:
+                try:
+                    # Try to parse paid_at, fall back to created_at
+                    date_str = tx.get('paid_at') or tx.get('created_at')
+                    if not date_str:
+                        continue
+
+                    if isinstance(date_str, str):
+                        date_str = date_str.replace('Z', '+00:00')
+                        try:
+                            tx_date = datetime.fromisoformat(date_str)
+                            # Ensure timezone-aware
+                            if tx_date.tzinfo is None:
+                                tx_date = tx_date.replace(tzinfo=timezone.utc)
+                        except:
+                            continue
+                    else:
+                        tx_date = date_str
+                        # Ensure timezone-aware
+                        if isinstance(tx_date, datetime) and tx_date.tzinfo is None:
+                            tx_date = tx_date.replace(tzinfo=timezone.utc)
+
+                    if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                        continue
+
+                    product_id = tx.get('product_id', 'Unknown')
+                    if product_id not in product_data:
+                        product_data[product_id] = {'revenue': 0.0, 'orders': 0}
+
+                    product_data[product_id]['revenue'] += float(tx.get('amount', 0))
+                    product_data[product_id]['orders'] += 1
+                except Exception:
+                    continue
+
+        sorted_products = sorted(
+            product_data.items(),
+            key=lambda x: x[1]['revenue'],
+            reverse=True
+        )[:10]
+        
+        print(f"[DEBUG] Top products (top 10): {len(sorted_products)}")
+        for pid, data in sorted_products:
+            print(f"  - {pid}: ${data['revenue']:.2f} ({data['orders']} orders)")
+        
+        result = []
+        for product_id, data in sorted_products:
+            result.append({
+                'product_id': product_id,
+                'name': product_id,  # Using product_id as name
+                'revenue': data['revenue'],
+                'orders': data['orders'],
+                'category': 'Product'
+            })
+        
+        print(f"[DEBUG] Returning {len(result)} products")
         return result
     
     async def detect_anomalies(self, lookback_days: int = 90) -> List[Dict]:

@@ -1,21 +1,18 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/api/client';
-import { mockDailyRevenue } from '@/lib/mockData';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 
 export default function Timeline() {
-  const { data: dailyRevenue } = useQuery({
+  const { data: dailyRevenue = [] } = useQuery({
     queryKey: ['daily-revenue'],
     queryFn: () => apiClient.getDailyRevenue(),
-    initialData: mockDailyRevenue,
   });
 
   const { data: anomalies = [] } = useQuery({
     queryKey: ['anomalies'],
     queryFn: () => apiClient.getAnomalies(),
-    initialData: [],
   });
 
   const formatCurrency = (value: number) => {

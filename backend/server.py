@@ -43,10 +43,38 @@ narrative_service = NarrativeService()
 async def root():
     return {"message": "Revenue Analytics API", "version": "1.0.0"}
 
+# Debug endpoint to check database state
+@api_router.get("/v1/debug/data-count")
+async def data_count():
+    """Debug endpoint: returns count of transactions in database"""
+    count = await db.transactions.count_documents({})
+    first_doc = await db.transactions.find_one()
+    
+    # Count transactions by status
+    status_counts = {}
+    for status in ['completed', 'pending', 'failed', 'refunded']:
+        status_counts[status] = await db.transactions.count_documents({'status': status})
+    
+    # Count products
+    pipeline = [
+        {'$group': {'_id': '$product_id', 'count': {'$sum': 1}}}
+    ]
+    product_cursor = db.transactions.aggregate(pipeline)
+    products = await product_cursor.to_list(length=None)
+    
+    return {
+        "transaction_count": count,
+        "has_data": count > 0,
+        "status_breakdown": status_counts,
+        "product_count": len(products),
+        "products": [{'product_id': p['_id'], 'count': p['count']} for p in products],
+        "sample_transaction": first_doc if first_doc else None
+    }
+
 # ============ Transaction Endpoints ============
 
 @api_router.post("/v1/transactions/import")
-async def import_transactions(file: UploadFile = File(...)):
+async def import_transactions(file: UploadFile = File(...), preview: bool = Query(False)):
     """
     Import transactions from CSV or Excel file.
     Accepts .csv, .xlsx, and .xls files.
@@ -62,7 +90,8 @@ async def import_transactions(file: UploadFile = File(...)):
         )
     
     content = await file.read()
-    result = await import_service.import_from_file(content, file_ext)
+    # pass preview flag to import service; when preview=True the service will not insert
+    result = await import_service.import_from_file(content, file_ext, preview=preview)
     return result
 
 @api_router.get("/v1/transactions", response_model=list[TransactionResponse])

@@ -1,16 +1,19 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/api/client';
-import { mockProducts } from '@/lib/mockData';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Package } from 'lucide-react';
 
 export default function Products() {
-  const { data: products } = useQuery({
+  const { data: products = [], isLoading, error } = useQuery({
     queryKey: ['top-products'],
     queryFn: () => apiClient.getTopProducts(30),
-    initialData: mockProducts,
   });
+
+  // Debug: log the products data
+  console.log('Products data:', products);
+  console.log('Products length:', products.length);
+  if (error) console.log('Products error:', error);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -22,13 +25,51 @@ export default function Products() {
   };
 
   const chartData = products.map(p => ({
-    name: p.name.length > 20 ? p.name.substring(0, 17) + '...' : p.name,
+    name: p.name && p.name.length > 20 ? p.name.substring(0, 17) + '...' : (p.name || p.product_id),
     revenue: p.revenue,
     orders: p.orders,
   }));
 
   const totalRevenue = products.reduce((sum, p) => sum + p.revenue, 0);
   const totalOrders = products.reduce((sum, p) => sum + p.orders, 0);
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Product Performance</h1>
+          <p className="text-muted-foreground mt-1">
+            Top performing products by revenue (last 30 days)
+          </p>
+        </div>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-red-500">Error loading data: {error instanceof Error ? error.message : 'Unknown error'}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Show empty state
+  if (!isLoading && products.length === 0) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Product Performance</h1>
+          <p className="text-muted-foreground mt-1">
+            Top performing products by revenue (last 30 days)
+          </p>
+        </div>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">No product data available. Please import CSV data first.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">

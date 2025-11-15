@@ -1,16 +1,14 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/api/client';
-import { mockAnomalies } from '@/lib/mockData';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function Anomalies() {
-  const { data: anomalies } = useQuery({
+  const { data: anomalies = [] } = useQuery({
     queryKey: ['anomalies'],
     queryFn: () => apiClient.getAnomalies(90),
-    initialData: mockAnomalies,
   });
 
   const formatCurrency = (value: number) => {

@@ -1,92 +1,85 @@
-
-## 🚀 Step-by-Step Guide to Run the Backend
-
-This guide assumes you are starting from the root of your project directory (`C:\revenue-pulse-15-main\backend`).
-
------
-
-### Step 1: Clone the Repository and Navigate
-
-First, ensure you are inside the correct project directory where your `server.py` and `.venv` are located.
-
-```powershell
-# If you are outside the backend directory, navigate into it:
-PS C:\revenue-pulse-15-main> cd backend
-# Now you should be here:
-PS C:\revenue-pulse-15-main\backend>
-```
-
------
-
-### Step 2: Activate the Virtual Environment
-
-You must always work inside your virtual environment (`.venv`) to ensure you use the project's specific dependencies.
-
-```powershell
-# Activate the virtual environment
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-```
-
-You should see `(.venv)` prefixing your prompt, indicating the environment is active: `(.venv) PS C:\revenue-pulse-15-main\backend>`
-
------
-
-### Step 3: Install Dependencies (If needed)
-
-Although you have run these before, it's a critical step for any new setup. Ensure all required packages are installed.
-
-```powershell
-# Install all required packages from a requirements.txt (if you have one)
-(.venv) PS C:\revenue-pulse-15-main\backend> pip install -r requirements.txt 
-
-# If you don't have a requirements.txt, ensure key packages are installed:
-(.venv) PS C:\revenue-pulse-15-main\backend> pip install uvicorn fastapi python-dotenv motor google-genai
-```
-
------
-
-### Step 4: Configure Environment Variables (`.env`)
-
-The application needs two critical secrets to run. You must create a file named **`.env`** in the `C:\revenue-pulse-15-main\backend` directory and add the following two variables, substituting the placeholders with your actual secrets.
-
-> **Crucial Note:** Your MongoDB password must be **URL-escaped** (e.g., `#` becomes `%23`).
-
-| Variable | Description |
-| :--- | :--- |
-| `MONGO_URL` | Your MongoDB Atlas connection string (must be escaped). |
-| `GEMINI_API_KEY` | Your API key obtained from Google AI Studio. |
-
-```ini
-# .env file content
-MONGO_URL="mongodb://<user>:<password_escaped>@<host>/<database>?<options>"
-GEMINI_API_KEY="AIzaSy...your-actual-key-here"
-```
-
------
-
-### Step 5: Run the Server
-
-Execute the Uvicorn command to start the application in **development mode** (`--reload` enables automatic restart on code changes).
-
-```powershell
-(.venv) PS C:\revenue-pulse-15-main\backend> uvicorn server:app --reload --host 0.0.0.0 --port 8000
-```
-
------
-
-### Step 6: Verify and Access the API
-
-If the server starts successfully, you will see the message: `INFO: Application startup complete.`.
-
-1.  **Check Status:** The server will be listening at `http://0.0.0.0:8000`.
-
-2.  **Access Docs:** Open your web browser and navigate to the FastAPI auto-generated documentation to view and test your endpoints:
-
-    `http://127.0.0.1:8000/docs` or `http://localhost:8000/docs`
-
-You can now interact with your backend\!
+{
+  "name": "vite_react_shadcn_ts",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "build:dev": "vite build --mode development",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^3.10.0",
+    "@radix-ui/react-accordion": "^1.2.11",
+    "@radix-ui/react-alert-dialog": "^1.1.14",
+    "@radix-ui/react-aspect-ratio": "^1.1.7",
+    "@radix-ui/react-avatar": "^1.1.10",
+    "@radix-ui/react-checkbox": "^1.3.2",
+    "@radix-ui/react-collapsible": "^1.1.11",
+    "@radix-ui/react-context-menu": "^2.2.15",
+    "@radix-ui/react-dialog": "^1.1.14",
+    "@radix-ui/react-dropdown-menu": "^2.1.15",
+    "@radix-ui/react-hover-card": "^1.1.14",
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-menubar": "^1.1.15",
+    "@radix-ui/react-navigation-menu": "^1.2.13",
+    "@radix-ui/react-popover": "^1.1.14",
+    "@radix-ui/react-progress": "^1.1.7",
+    "@radix-ui/react-radio-group": "^1.3.7",
+    "@radix-ui/react-scroll-area": "^1.2.9",
+    "@radix-ui/react-select": "^2.2.5",
+    "@radix-ui/react-separator": "^1.1.7",
+    "@radix-ui/react-slider": "^1.3.5",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@radix-ui/react-switch": "^1.2.5",
+    "@radix-ui/react-tabs": "^1.1.12",
+    "@radix-ui/react-toast": "^1.2.14",
+    "@radix-ui/react-toggle": "^1.1.9",
+    "@radix-ui/react-toggle-group": "^1.1.10",
+    "@radix-ui/react-tooltip": "^1.2.7",
+    "@tanstack/react-query": "^5.83.0",
+    "axios": "^1.13.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "date-fns": "^3.6.0",
+    "embla-carousel-react": "^8.6.0",
+    "input-otp": "^1.4.2",
+    "lucide-react": "^0.462.0",
+    "next-themes": "^0.3.0",
+    "react": "^18.3.1",
+    "react-day-picker": "^8.10.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.61.1",
+    "react-resizable-panels": "^2.1.9",
+    "react-router-dom": "^6.30.1",
+    "recharts": "^2.15.4",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss-animate": "^1.0.7",
+    "vaul": "^0.9.9",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@tailwindcss/typography": "^0.5.16",
+    "@types/node": "^22.16.5",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react-swc": "^3.11.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.32.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^15.15.0",
+    "lovable-tagger": "^1.1.11",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.38.0",
+    "vite": "^5.4.19"
+  }
+}

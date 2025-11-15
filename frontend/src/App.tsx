@@ -8,7 +8,6 @@ import Overview from "./pages/Overview";
 import Timeline from "./pages/Timeline";
 import Products from "./pages/Products";
 import Anomalies from "./pages/Anomalies";
-import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,7 +24,6 @@ const App = () => (
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/products" element={<Products />} />
             <Route path="/anomalies" element={<Anomalies />} />
-            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Layout>

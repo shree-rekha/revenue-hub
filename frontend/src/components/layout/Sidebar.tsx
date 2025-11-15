@@ -1,4 +1,4 @@
-import { BarChart3, TrendingUp, Package, AlertTriangle, Settings, Menu } from 'lucide-react';
+import { BarChart3, TrendingUp, Package, AlertTriangle, Menu } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,6 @@ const navigation = [
   { name: 'Timeline', href: '/timeline', icon: TrendingUp },
   { name: 'Products', href: '/products', icon: Package },
   { name: 'Anomalies', href: '/anomalies', icon: AlertTriangle },
-  { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export function Sidebar() {
@@ -78,7 +77,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="p-4 border-t border-border">
         <div className="bg-muted rounded-lg p-3 text-xs text-muted-foreground">
           <p className="font-semibold mb-1">Backend Required</p>
-          <p>Connect to FastAPI backend in Settings to view live data.</p>
+          <p>Loading data from backend...</p>
         </div>
       </div>
     </div>

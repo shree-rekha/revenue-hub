@@ -1,10 +1,12 @@
 # services/narrative_service.py - FINAL CORRECTED for Google Gemini
 
 # --- UPDATED Imports for Gemini ---
-from google import genai
-from google.genai import types
-from google.genai.errors import APIError
-from google.genai.client import Client as GeminiClient
+try:
+    import google.generativeai as genai
+    from google.generativeai import types
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 # ----------------------------------
 
@@ -19,9 +21,10 @@ class NarrativeService:
     def __init__(self):
         # Use standard Gemini environment variable
         self.api_key = os.environ.get("GEMINI_API_KEY", "")
+        
+        if self.api_key and GENAI_AVAILABLE:
+            genai.configure(api_key=self.api_key)
 
-        # Initialize asynchronous Gemini client
-        self.client = GeminiClient()
         # Choose a balanced model (speed + cost-effective)
         self.model = "gemini-2.5-flash"
 
@@ -42,13 +45,14 @@ class NarrativeService:
     ) -> str:
         """
         Generate AI-powered narrative insights using the Gemini LLM.
+        Falls back to rule-based narrative if API is unavailable or fails.
         """
-        if not self.api_key:
+        if not self.api_key or not GENAI_AVAILABLE:
             return self._generate_fallback_narrative(today, mtd, ytd, rhi, top_products, anomalies)
 
         try:
             # Prepare context data
-            top_product_names = [p["name"] for p in top_products[:3]]
+            top_product_names = [p.get("name", "Unknown") for p in top_products[:3]]
             anomaly_count = len(anomalies)
             spike_count = sum(1 for a in anomalies if a.get("direction") == "spike")
             drop_count = anomaly_count - spike_count
@@ -67,26 +71,24 @@ Provide 2-3 sentences highlighting key insights and trends.
 """
 
             # --- Gemini Chat Completion Logic ---
-            config = types.GenerateContentConfig(
+            response = genai.GenerativeModel(
+                model_name=self.model,
                 system_instruction=self.system_message_content,
-                temperature=0.2,  # Lower temperature = more focused analytical text
+            ).generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2,
+                ),
             )
 
-            response = await self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=config,
-            )
+            # Return trimmed response text
+            if response and hasattr(response, 'text'):
+                return response.text.strip()
+            else:
+                return self._generate_fallback_narrative(today, mtd, ytd, rhi, top_products, anomalies)
 
-            # Return trimmed response
-            return response.text.strip()
-            # ----------------------------------------
-
-        except APIError as e:
-            logger.error(f"Gemini API Error: {str(e)}")
-            return self._generate_fallback_narrative(today, mtd, ytd, rhi, top_products, anomalies)
         except Exception as e:
-            logger.error(f"Failed to generate narrative (Non-API error): {str(e)}")
+            logger.error(f"Failed to generate narrative: {str(e)}")
             return self._generate_fallback_narrative(today, mtd, ytd, rhi, top_products, anomalies)
 
     # ------------------ FALLBACK ------------------
