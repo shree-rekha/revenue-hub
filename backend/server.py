@@ -52,7 +52,7 @@ async def data_count():
     
     # Count transactions by status
     status_counts = {}
-    for status in ['completed', 'pending', 'failed', 'refunded']:
+    for status in ['completed', 'pending', 'failed', 'refunded', '']:
         status_counts[status] = await db.transactions.count_documents({'status': status})
     
     # Count products
@@ -69,6 +69,16 @@ async def data_count():
         "product_count": len(products),
         "products": [{'product_id': p['_id'], 'count': p['count']} for p in products],
         "sample_transaction": first_doc if first_doc else None
+    }
+
+# Debug endpoint to clear all transactions
+@api_router.delete("/v1/debug/clear-all")
+async def clear_all():
+    """Debug endpoint: CLEARS ALL TRANSACTIONS FROM DATABASE"""
+    result = await db.transactions.delete_many({})
+    return {
+        "deleted": result.deleted_count,
+        "message": f"Deleted {result.deleted_count} transactions"
     }
 
 # ============ Transaction Endpoints ============

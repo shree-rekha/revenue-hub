@@ -41,11 +41,17 @@ export default function Overview() {
       }
       
       // Invalidate all queries to refresh with new imported data
-      queryClient.invalidateQueries({ queryKey: ['transactions'], exact: true });
-      queryClient.invalidateQueries({ queryKey: ['revenue-summary'] ,exact:true});
-      queryClient.invalidateQueries({ queryKey: ['daily-revenue'],exact:true });
-      queryClient.invalidateQueries({ queryKey: ['top-products'], exact: true });
-      queryClient.invalidateQueries({ queryKey: ['anomalies'], exact: true });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['revenue-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['daily-revenue'] });
+      queryClient.invalidateQueries({ queryKey: ['top-products'] });
+      queryClient.invalidateQueries({ queryKey: ['anomalies'] });
+      
+      // Force immediate refetch
+      setTimeout(() => {
+        queryClient.refetchQueries({ queryKey: ['transactions'] });
+        queryClient.refetchQueries({ queryKey: ['revenue-summary'] });
+      }, 500);
     },
     onError: (error) => {
       const errorMsg = error instanceof Error ? error.message : 'Import failed';

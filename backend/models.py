@@ -11,7 +11,8 @@ class TransactionCreate(BaseModel):
     currency: str = "USD"
     status: Literal['completed', 'pending', 'failed', 'refunded']
     channel: Literal['web', 'mobile', 'api', 'partner']
-    paid_at: str
+    # Allow None to accommodate unpaid/cancelled/failed transactions
+    paid_at: Optional[str] = None
     refunded: bool = False
     refund_amount: float = 0.0
     region: str

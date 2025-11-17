@@ -3,11 +3,15 @@ import io
 from typing import Dict, Any, List
 from datetime import datetime
 import uuid
-from dateutil import parser # 💡 NEW: For robust date parsing
-import logging # 💡 NEW: For internal logging
+from dateutil import parser
+import logging
+from decimal import Decimal, InvalidOperation
 
-# Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+ALLOWED_EXTS = {"csv", "xlsx", "xls"}
+MAX_ROWS_SOFT_LIMIT = 200_000
+
 
 class ImportService:
     def __init__(self, db):
@@ -15,247 +19,265 @@ class ImportService:
         self.collection = db.transactions
 
     async def import_from_file(self, content: bytes, file_ext: str, preview: bool = False) -> Dict[str, Any]:
-        """
-        Import transactions from CSV or Excel file.
-
-        If preview=True, parse and return a small preview of rows and detected/missing columns
-        without inserting into the DB.
-        """
-        skipped_details: List[Dict[str, Any]] = [] # 💡 NEW: To track reasons for skipping
-        total_rows = 0 
+        """Import transactions from CSV or Excel file."""
+        file_ext = (file_ext or '').lower().strip().lstrip('.')
+        if file_ext not in ALLOWED_EXTS:
+            return {
+                'success': False,
+                'error': f'Unsupported file type: {file_ext}. Allowed: {", ".join(sorted(ALLOWED_EXTS))}'
+            }
+        
+        total_rows = 0
         
         try:
-            # Read file into DataFrame
+            # Read file
             if file_ext == 'csv':
-                df = pd.read_csv(io.BytesIO(content))
-            else:  # xlsx or xls
-                df = pd.read_excel(io.BytesIO(content))
+                df = pd.read_csv(io.BytesIO(content), dtype=str, low_memory=False)
+            else:
+                df = pd.read_excel(io.BytesIO(content), dtype=str)
             
             total_rows = len(df)
+            if total_rows > MAX_ROWS_SOFT_LIMIT and not preview:
+                return {
+                    'success': False,
+                    'error': f'File too large: {total_rows} rows exceeds soft limit of {MAX_ROWS_SOFT_LIMIT}. Split the file and try again.'
+                }
             
-            # Normalize column names (strip + lower)
             original_columns = list(df.columns)
-            lowered_keys = [c.strip().lower() for c in original_columns]
+            logging.info(f"CSV columns: {original_columns}")
 
-            # Define canonical fields and common synonyms
-            canonical_map = {
-                'order_id': ['order_id', 'order id', 'id', 'orderid'],
-                'user_id': ['user_id', 'user id', 'userid'],
-                'product_id': ['product_id', 'product id', 'sku', 'productid'],
-                'amount': ['amount', 'amt', 'value', 'price'],
-                'currency': ['currency', 'curr'],
-                'status': ['status', 'state'],
-                'channel': ['channel', 'source', 'platform'],
-                'created_at': ['created_at', 'created at', 'createdat', 'date_created'],
-                'paid_at': ['paid_at', 'paid at', 'paidat', 'timestamp', 'date'],
-                'region': ['region', 'country', 'locale'],
-                'refunded': ['refunded', 'is_refunded'],
-                'refund_amount': ['refund_amount', 'refund amount', 'refund'],
-                'attribution_campaign': ['attribution_campaign', 'campaign', 'utm_campaign'],
-            }
+            # Simple column mapping - just use lowercase matching
+            def find_column(df_cols, keywords):
+                """Find a column by keywords"""
+                for keyword in keywords:
+                    for col in df_cols:
+                        if col.lower().strip() == keyword.lower().strip():
+                            return col
+                return None
 
-            # Map dataframe columns to canonical names
-            mapped_columns: Dict[str, str] = {}
-            missing_required: List[str] = []
-            
-            # --- Column Mapping Logic (Unchanged and correct) ---
-            for canon, synonyms in canonical_map.items():
-                found = None
-                for syn in synonyms:
-                    syn = syn.strip().lower()
-                    for orig in original_columns:
-                        if orig.strip().lower() == syn:
-                            found = orig
-                            break
-                    if found:
-                        break
-                if found:
-                    mapped_columns[canon] = found
-                else:
-                    if canon in ['order_id', 'user_id', 'product_id', 'amount', 'status', 'channel', 'region']:
-                        missing_required.append(canon)
-            # ---------------------------------------------------
+            order_id_col = find_column(original_columns, ['order_id', 'order id', 'id', 'orderid'])
+            user_id_col = find_column(original_columns, ['user_id', 'user id', 'userid'])
+            product_id_col = find_column(original_columns, ['product_id', 'product id', 'sku', 'productid'])
+            amount_col = find_column(original_columns, ['amount', 'amt', 'value', 'price'])
+            currency_col = find_column(original_columns, ['currency', 'curr'])
+            status_col = find_column(original_columns, ['status', 'state'])
+            channel_col = find_column(original_columns, ['channel', 'source', 'platform'])
+            created_at_col = find_column(original_columns, ['created_at', 'created at', 'createdat', 'date_created'])
+            paid_at_col = find_column(original_columns, ['paid_at', 'paid at', 'paidat', 'timestamp', 'date'])
+            region_col = find_column(original_columns, ['region', 'country', 'locale'])
+            refunded_col = find_column(original_columns, ['refunded', 'is_refunded'])
+            refund_amount_col = find_column(original_columns, ['refund_amount', 'refund amount', 'refund'])
+            campaign_col = find_column(original_columns, ['attribution_campaign', 'campaign', 'utm_campaign'])
 
-            # Helper to sanitize preview values (convert NaN/inf to safe values)
-            def sanitize_value(val):
-                if val is None or pd.isna(val):
-                    return None
-                if isinstance(val, (int, float)):
-                    # Check for NaN or infinity
-                    if isinstance(val, float) and not (-1e308 < val < 1e308):
-                        return None
-                    return val
-                if hasattr(val, 'item'):  # pandas scalar
-                    return val.item()
-                return val
+            logging.info(f"Mapped: order_id={order_id_col}, amount={amount_col}, status={status_col}")
 
-            if total_rows > 0 and preview:
-                preview_rows: List[Dict[str, Any]] = []
-                for _, row in df.head(10).iterrows():
-                    mapped_row = {}
-                    for canon, orig_col in mapped_columns.items():
-                        raw_val = row.get(orig_col, None)
-                        mapped_row[canon] = sanitize_value(raw_val)
-                    preview_rows.append(mapped_row)
-
+            # Preview mode
             if preview:
+                preview_rows = []
+                for _, row in df.head(10).iterrows():
+                    preview_row = {}
+                    # Include all mapped columns in preview
+                    if order_id_col:
+                        preview_row['order_id'] = str(row.get(order_id_col, '')).strip()
+                    if user_id_col:
+                        preview_row['user_id'] = str(row.get(user_id_col, '')).strip()
+                    if product_id_col:
+                        preview_row['product_id'] = str(row.get(product_id_col, '')).strip()
+                    if amount_col:
+                        preview_row['amount'] = str(row.get(amount_col, '')).strip()
+                    if currency_col:
+                        preview_row['currency'] = str(row.get(currency_col, '')).strip()
+                    if status_col:
+                        preview_row['status'] = str(row.get(status_col, '')).strip()
+                    if channel_col:
+                        preview_row['channel'] = str(row.get(channel_col, '')).strip()
+                    if created_at_col:
+                        preview_row['created_at'] = str(row.get(created_at_col, '')).strip()
+                    if paid_at_col:
+                        preview_row['paid_at'] = str(row.get(paid_at_col, '')).strip()
+                    if region_col:
+                        preview_row['region'] = str(row.get(region_col, '')).strip()
+                    if refunded_col:
+                        preview_row['refunded'] = str(row.get(refunded_col, '')).strip()
+                    if refund_amount_col:
+                        preview_row['refund_amount'] = str(row.get(refund_amount_col, '')).strip()
+                    if campaign_col:
+                        preview_row['attribution_campaign'] = str(row.get(campaign_col, '')).strip()
+                    
+                    preview_rows.append(preview_row)
+                
+                mapped_columns_dict = {}
+                if order_id_col:
+                    mapped_columns_dict['order_id'] = order_id_col
+                if user_id_col:
+                    mapped_columns_dict['user_id'] = user_id_col
+                if product_id_col:
+                    mapped_columns_dict['product_id'] = product_id_col
+                if amount_col:
+                    mapped_columns_dict['amount'] = amount_col
+                if currency_col:
+                    mapped_columns_dict['currency'] = currency_col
+                if status_col:
+                    mapped_columns_dict['status'] = status_col
+                if channel_col:
+                    mapped_columns_dict['channel'] = channel_col
+                if created_at_col:
+                    mapped_columns_dict['created_at'] = created_at_col
+                if paid_at_col:
+                    mapped_columns_dict['paid_at'] = paid_at_col
+                if region_col:
+                    mapped_columns_dict['region'] = region_col
+                if refunded_col:
+                    mapped_columns_dict['refunded'] = refunded_col
+                if refund_amount_col:
+                    mapped_columns_dict['refund_amount'] = refund_amount_col
+                if campaign_col:
+                    mapped_columns_dict['attribution_campaign'] = campaign_col
+                
+                logging.info(f"Preview: {len(preview_rows)} rows, columns: {list(mapped_columns_dict.keys())}")
+                
                 return {
                     'success': True,
                     'preview': preview_rows,
-                    'mapped_columns': mapped_columns,
-                    'missing_required': missing_required,
+                    'mapped_columns': mapped_columns_dict,
                     'total': total_rows,
                 }
 
-            # For actual import, fail if required columns missing
-            if missing_required:
-                return {
-                    'success': False,
-                    'error': f"Missing required columns: {', '.join(missing_required)}. Cannot proceed with import.",
-                    'mapped_columns': mapped_columns,
-                }
-
-            # Process and validate data
+            # Process all rows - NO SKIPPING
             transactions = []
-            skipped = 0
 
-            # 💡 NEW HELPER FUNCTION: Robust date parsing
-            def safe_date_parse(val, default=None):
-                if val is None or pd.isna(val):
-                    return default
-                try:
-                    # dateutil.parser handles a wide variety of formats
-                    dt = parser.parse(str(val)) 
-                    # Convert to ISO 8601 string for DB storage
-                    return dt.isoformat() 
-                except (parser.ParserError, TypeError, ValueError):
-                    return default
-            
-            # Helper to convert bool strings ('false', 'true', 'yes', 'no') (Unchanged)
-            def to_bool(val):
-                if isinstance(val, bool):
-                    return val
-                if isinstance(val, (int, float)):
-                    return bool(val)
-                if isinstance(val, str):
-                    return val.lower() in ['true', 'yes', '1']
-                return False
-
-            # Helper to safely convert to float, avoiding NaN/inf (Unchanged)
-            def safe_float(val, default=0.0):
-                try:
-                    if val is None or pd.isna(val):
-                        return default
-                    f = float(val)
-                    if not (-1e308 < f < 1e308):
-                        return default
-                    return f
-                except (ValueError, TypeError):
-                    return default
-            
-            # --- Main Processing Loop ---
             for index, row in df.iterrows():
                 try:
-                    def get_val(key):
-                        col = mapped_columns.get(key)
-                        return row.get(col) if col is not None else None
-
-                    raw_status = get_val('status')
-                    status = str(raw_status).lower() if raw_status is not None else ''
-                    channel_raw = get_val('channel')
-                    channel = str(channel_raw).lower() if channel_raw is not None else ''
+                    # Get values with defaults
+                    order_id = str(row.get(order_id_col, '')).strip() if order_id_col else ''
+                    if not order_id:
+                        order_id = f"AUTO-{uuid.uuid4().hex[:8]}"
                     
-                    # 💡 ENHANCED: Use safe_date_parse
-                    created_at_str = safe_date_parse(get_val('created_at'), default=datetime.utcnow().isoformat())
-                    paid_at_str = safe_date_parse(get_val('paid_at'))
+                    user_id = str(row.get(user_id_col, '')).strip() if user_id_col else ''
+                    product_id = str(row.get(product_id_col, '')).strip() if product_id_col else ''
+                    
+                    amount_str = str(row.get(amount_col, '0')).strip() if amount_col else '0'
+                    try:
+                        amount = float(amount_str.replace(',', '').replace('$', ''))
+                    except:
+                        amount = 0.0
+                    
+                    currency = str(row.get(currency_col, 'USD')).strip().upper() if currency_col else 'USD'
+                    status = str(row.get(status_col, '')).strip().lower() if status_col else ''
+                    channel = str(row.get(channel_col, '')).strip().lower() if channel_col else ''
+
+                    # Normalize values to match API schema
+                    if status == 'cancelled':
+                        status = 'failed'
+                    if channel == 'email':
+                        channel = 'partner'
+                    
+                    created_at_str = str(row.get(created_at_col, '')).strip() if created_at_col else ''
+                    try:
+                        created_at = parser.parse(created_at_str).isoformat() if created_at_str else datetime.utcnow().isoformat()
+                    except:
+                        created_at = datetime.utcnow().isoformat()
+                    
+                    paid_at_str = str(row.get(paid_at_col, '')).strip() if paid_at_col else ''
+                    try:
+                        paid_at = parser.parse(paid_at_str).isoformat() if paid_at_str else None
+                    except:
+                        paid_at = None
+                    # If status indicates completion but paid_at missing, allow None; model supports Optional[str]
+                    
+                    refunded_str = str(row.get(refunded_col, 'false')).strip().lower() if refunded_col else 'false'
+                    refunded = refunded_str in ['true', 'yes', '1']
+                    
+                    refund_amount_str = str(row.get(refund_amount_col, '0')).strip() if refund_amount_col else '0'
+                    try:
+                        refund_amount = float(refund_amount_str.replace(',', '').replace('$', ''))
+                    except:
+                        refund_amount = 0.0
+                    
+                    region = str(row.get(region_col, '')).strip() if region_col else ''
+                    campaign = str(row.get(campaign_col, '')).strip() if campaign_col else ''
 
                     tx = {
                         'id': str(uuid.uuid4()),
-                        # Basic cleaning and null checks for strings
-                        'order_id': str(get_val('order_id')).strip() if get_val('order_id') is not None else None,
-                        'user_id': str(get_val('user_id')).strip() if get_val('user_id') is not None else None,
-                        'product_id': str(get_val('product_id')).strip() if get_val('product_id') is not None else None,
-                        'amount': safe_float(get_val('amount'), 0.0),
-                        'currency': str(get_val('currency')).strip().upper() if get_val('currency') is not None else 'USD',
+                        'order_id': order_id,
+                        'user_id': user_id,
+                        'product_id': product_id,
+                        'amount': amount,
+                        'currency': currency,
                         'status': status,
                         'channel': channel,
-                        'created_at': created_at_str,
-                        'paid_at': paid_at_str,
-                        'refunded': to_bool(get_val('refunded')),
-                        'refund_amount': safe_float(get_val('refund_amount'), 0.0),
-                        'region': str(get_val('region')).strip() if get_val('region') is not None else None,
-                        'attribution_campaign': str(get_val('attribution_campaign')).strip() if get_val('attribution_campaign') is not None else None,
+                        'created_at': created_at,
+                        'paid_at': paid_at,
+                        'refunded': refunded,
+                        'refund_amount': refund_amount,
+                        'region': region,
+                        'attribution_campaign': campaign,
                     }
 
-                    reason = None # Reset reason for current row
-
-                    # 1. Validate status and channel
-                    if tx['status'] not in ['completed', 'pending', 'failed', 'refunded']:
-                        reason = f"Invalid status: {tx['status']}"
-                    elif tx['channel'] not in ['web', 'mobile', 'api', 'partner']:
-                        reason = f"Invalid channel: {tx['channel']}"
-                    
-                    # 2. Ensure required fields are present and non-null
-                    elif not tx['order_id'] or not tx['user_id'] or not tx['product_id'] or not tx['region']:
-                        reason = "Missing required identifier (Order ID, User ID, Product ID, or Region)"
-                        
-                    # 3. Ensure amount is valid
-                    elif tx['amount'] < 0:
-                        reason = "Amount is negative"
-
-                    if reason:
-                        skipped += 1
-                        # 💡 NEW: Log and record skipped row details
-                        skipped_details.append({
-                            'index': index + 2, # +2 to account for 0-index and header row
-                            'reason': reason,
-                            'order_id': tx['order_id'] or 'N/A'
-                        })
-                        continue
-
                     transactions.append(tx)
+                    logging.info(f"Row {index + 2}: order_id={order_id}, amount={amount}")
+
                 except Exception as e:
-                    # Catch and report unexpected row-level errors
-                    skipped += 1
-                    skipped_details.append({
-                        'index': index + 2,
-                        'reason': f"Unexpected processing error: {str(e)}",
-                        'order_id': str(row.get(mapped_columns.get('order_id', 'N/A'), 'N/A'))
-                    })
-                    logging.warning(f"Error processing row {index + 2}: {e}")
-                    continue
+                    logging.error(f"Row {index + 2} error: {str(e)}", exc_info=True)
+                    # Still add the row with defaults
+                    tx = {
+                        'id': str(uuid.uuid4()),
+                        'order_id': f"AUTO-{uuid.uuid4().hex[:8]}",
+                        'user_id': '',
+                        'product_id': '',
+                        'amount': 0.0,
+                        'currency': 'USD',
+                        'status': '',
+                        'channel': '',
+                        'created_at': datetime.utcnow().isoformat(),
+                        'paid_at': None,
+                        'refunded': False,
+                        'refund_amount': 0.0,
+                        'region': '',
+                        'attribution_campaign': '',
+                    }
+                    transactions.append(tx)
+
+            logging.info(f"Total transactions to insert: {len(transactions)}")
 
             if not transactions:
                 return {
                     'success': False,
-                    'error': 'No valid transactions found in file',
-                    'skipped': skipped,
+                    'error': 'No transactions to import',
                     'total': total_rows,
-                    'skipped_details': skipped_details # 💡 NEW: Return detailed skips
                 }
 
-            logging.info(f"Inserting {len(transactions)} transactions into MongoDB")
-            
-            # Insert into database
-            result = await self.collection.insert_many(transactions)
-            
-            logging.info(f"Successfully inserted {len(result.inserted_ids)} records")
+            # Insert into DB
+            try:
+                logging.info(f"About to insert {len(transactions)} transactions")
+                logging.info(f"First transaction: {transactions[0] if transactions else 'NONE'}")
+                
+                result = await self.collection.insert_many(transactions)
+                inserted = len(result.inserted_ids)
+                
+                logging.info(f"Successfully inserted {inserted} records")
+                logging.info(f"Inserted IDs: {result.inserted_ids[:5]}")
+                
+                # Verify insertion
+                count_after = await self.collection.count_documents({})
+                logging.info(f"Total transactions in DB after insert: {count_after}")
+                
+            except Exception as e:
+                logging.error(f"DB insert error: {str(e)}", exc_info=True)
+                inserted = 0
 
             return {
                 'success': True,
-                'imported': len(result.inserted_ids),
-                'skipped': skipped,
+                'imported': inserted,
+                'skipped': 0,
                 'total': total_rows,
-                'skipped_details': skipped_details # 💡 NEW: Return detailed skips
             }
 
         except Exception as e:
-            # Catch top-level file reading or structural errors
-            error_msg = f'Failed to process file: {str(e)}'
-            logging.error(error_msg, exc_info=True) # Use logging for better error handling
+            logging.error(f'Failed to process file: {str(e)}', exc_info=True)
             return {
                 'success': False,
-                'error': 'A critical error occurred during file processing (check file format or encoding).',
+                'error': 'A critical error occurred during file processing.',
                 'detail': str(e),
                 'total': total_rows,
             }

@@ -26,8 +26,8 @@ export default function Products() {
 
   const chartData = products.map(p => ({
     name: p.name && p.name.length > 20 ? p.name.substring(0, 17) + '...' : (p.name || p.product_id),
-    revenue: p.revenue,
-    orders: p.orders,
+    revenue: Number((p as any).revenue ?? 0),
+    orders: Number((p as any).orders ?? 0),
   }));
 
   const totalRevenue = products.reduce((sum, p) => sum + p.revenue, 0);
@@ -138,11 +138,11 @@ export default function Products() {
                     border: '1px solid hsl(var(--border))',
                     borderRadius: '8px',
                   }}
-                  formatter={(value: number) => formatCurrency(value)}
+                  formatter={(value: number | string) => formatCurrency(Number(value))}
                 />
                 <Bar 
                   dataKey="revenue" 
-                  fill="hsl(var(--chart-1))" 
+                  fill="hsl(var(--primary))" 
                   radius={[0, 8, 8, 0]}
                 />
               </BarChart>

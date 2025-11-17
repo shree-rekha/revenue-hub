@@ -6,16 +6,39 @@ class AnalyticsService:
     def __init__(self, db):
         self.db = db
         self.collection = db.transactions
+
+    def _normalize_tx(self, tx: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a transaction document to conform to API schema."""
+        if not tx:
+            return tx
+        status = (tx.get('status') or '').lower()
+        channel = (tx.get('channel') or '').lower()
+        if status == 'cancelled':
+            tx['status'] = 'failed'
+        if channel == 'email':
+            tx['channel'] = 'partner'
+        # Ensure created_at is a string
+        created_at = tx.get('created_at')
+        if isinstance(created_at, (datetime,)):
+            tx['created_at'] = created_at.isoformat()
+        # Ensure paid_at is Optional[str]
+        paid_at = tx.get('paid_at')
+        if isinstance(paid_at, (datetime,)):
+            tx['paid_at'] = paid_at.isoformat()
+        elif paid_at in ['', 'nan']:
+            tx['paid_at'] = None
+        return tx
     
     async def get_transactions(self, limit: int, offset: int) -> List[Dict]:
         """Get transactions with pagination."""
         cursor = self.collection.find().skip(offset).limit(limit).sort("created_at", -1)
         transactions = await cursor.to_list(length=limit)
-        return transactions
+        return [self._normalize_tx(tx) for tx in transactions]
     
     async def get_transaction(self, order_id: str) -> Optional[Dict]:
         """Get a specific transaction by order ID."""
-        return await self.collection.find_one({"order_id": order_id})
+        tx = await self.collection.find_one({"order_id": order_id})
+        return self._normalize_tx(tx) if tx else None
     
     async def get_daily_revenue(self, start: Optional[str] = None, end: Optional[str] = None) -> List[Dict]:
         """
@@ -77,8 +100,9 @@ class AnalyticsService:
                 if tx_date < start_date or tx_date > end_date:
                     continue
                 
-                # Only count completed/refunded transactions
-                if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                # Only count completed/refunded/pending transactions (or empty status)
+                status = tx.get('status', '')
+                if status not in ['completed', 'refunded', 'pending', '']:
                     continue
                 
                 day_str = tx_date.strftime('%Y-%m-%d')
@@ -114,8 +138,9 @@ class AnalyticsService:
                         if isinstance(tx_date, datetime) and tx_date.tzinfo is None:
                             tx_date = tx_date.replace(tzinfo=timezone.utc)
 
-                    # Only count completed/refunded/pending transactions
-                    if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                    # Only count completed/refunded/pending transactions (or empty status)
+                    status = tx.get('status', '')
+                    if status not in ['completed', 'refunded', 'pending', '']:
                         continue
 
                     day_str = tx_date.strftime('%Y-%m-%d')
@@ -171,7 +196,7 @@ class AnalyticsService:
             {
                 "$match": {
                     "paid_date": {"$gte": today_start},
-                    "status": {"$in": ["completed", "refunded", "pending"]}
+                    "status": {"$in": ["completed", "refunded", "pending", ""]}
                 }
             },
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -193,7 +218,7 @@ class AnalyticsService:
             {
                 "$match": {
                     "paid_date": {"$gte": month_start},
-                    "status": {"$in": ["completed", "refunded", "pending"]}
+                    "status": {"$in": ["completed", "refunded", "pending", ""]}
                 }
             },
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -215,7 +240,7 @@ class AnalyticsService:
             {
                 "$match": {
                     "paid_date": {"$gte": year_start},
-                    "status": {"$in": ["completed", "refunded", "pending"]}
+                    "status": {"$in": ["completed", "refunded", "pending", ""]}
                 }
             },
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -382,7 +407,8 @@ class AnalyticsService:
                     continue
                 
                 # Only count completed/refunded transactions
-                if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                status = tx.get('status', '')
+                if status not in ['completed', 'refunded', 'pending', '']:
                     continue
                 
                 product_id = tx.get('product_id', 'Unknown')
@@ -425,7 +451,8 @@ class AnalyticsService:
                         if isinstance(tx_date, datetime) and tx_date.tzinfo is None:
                             tx_date = tx_date.replace(tzinfo=timezone.utc)
 
-                    if tx.get('status') not in ['completed', 'refunded', 'pending']:
+                    status = tx.get('status', '')
+                    if status not in ['completed', 'refunded', 'pending', '']:
                         continue
 
                     product_id = tx.get('product_id', 'Unknown')
