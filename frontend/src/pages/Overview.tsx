@@ -1,4 +1,6 @@
 import { DollarSign, TrendingUp, Calendar, Activity, Download, FileText } from 'lucide-react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -95,8 +97,38 @@ export default function Overview() {
     }
   };
 
-  const handleExportPDF = () => {
-    window.alert('PDF export not available');
+  const handleExportPDF = async () => {
+    try {
+      const input = document.getElementById('root'); // Or a more specific container if you have one
+      if (input) {
+        const canvas = await html2canvas(input);
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const imgWidth = 210; // A4 width in mm
+        const pageHeight = 297; // A4 height in mm
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        let heightLeft = imgHeight;
+        let position = 0;
+
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+
+        while (heightLeft >= 0) {
+          position = heightLeft - imgHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+        }
+
+        pdf.save(`revenue_report_${new Date().toISOString().split('T')[0]}.pdf`);
+        toast.success('PDF report generated successfully!');
+      } else {
+        toast.error('Could not find the content to export as PDF.');
+      }
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error('Failed to generate PDF report.');
+    }
   };
 
   return (

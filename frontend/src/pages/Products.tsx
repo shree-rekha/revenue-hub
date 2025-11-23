@@ -30,6 +30,14 @@ export default function Products() {
     orders: Number((p as any).orders ?? 0),
   }));
 
+  // Extensive debug logging for chartData
+  console.log('Prepared chartData:', chartData);
+  const hasNaN = chartData.some(d => isNaN(d.revenue) || isNaN(d.orders));
+  if (hasNaN) {
+    console.error('chartData contains NaN values!', chartData);
+  }
+  console.log('chartData length:', chartData.length);
+
   const totalRevenue = products.reduce((sum, p) => sum + p.revenue, 0);
   const totalOrders = products.reduce((sum, p) => sum + p.orders, 0);
 
